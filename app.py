@@ -142,26 +142,44 @@ class BaseTextProcessor:
         return '\n\n'.join(processed_paragraphs)
 
     def split_text(self, text: str) -> List[str]:
-        """
-        Splits the input text into chunks based on the maximum token limit.
-
-        Args:
-            text (str): The input text to split.
-
-        Returns:
-            List[str]: A list of text chunks.
-        """
         preprocessed_text = self.preprocess_text(text)
         chars_per_token = len(preprocessed_text) / len(self.encoding.encode(preprocessed_text))
         max_chars = int(self.max_tokens_per_chunk * chars_per_token)
+        
+        logger.info(f"Preprocessed text length: {len(preprocessed_text)}")
+        logger.info(f"Chars per token: {chars_per_token:.2f}")
+        logger.info(f"Max chars per chunk: {max_chars}")
+        logger.info(f"Max tokens per chunk: {self.max_tokens_per_chunk}")
+        
+        separators = ["\n\n", "\n", "。", "！", "？", "；", "，", ".", "!", "?", ";", ",", " ", ""]
+        
         text_splitter = RecursiveCharacterTextSplitter(
-            chunk_size=max_chars,
+            chunk_size=self.max_tokens_per_chunk,
             chunk_overlap=50,
             length_function=lambda t: len(self.encoding.encode(t)),
-            separators=["\n\n", "\n", "。", "！", "？", "；", "，", ".", "!", "?", ";", ",", " ", ""]
+            separators=separators
         )
+        
+        # 打印每个分隔符的出现次数
+        for sep in separators:
+            count = preprocessed_text.count(sep)
+            logger.info(f"Separator '{sep}' appears {count} times")
+        
         chunks = text_splitter.split_text(preprocessed_text)
-        return [self._split_chunk(chunk) if len(self.encoding.encode(chunk)) > self.max_tokens_per_chunk else chunk for chunk in chunks]
+        
+        logger.info(f"Number of chunks after initial split: {len(chunks)}")
+        
+        # 如果只有一个块，打印更多信息
+        if len(chunks) == 1:
+            logger.warning("Only one chunk created. Printing chunk info:")
+            logger.info(f"Chunk length: {len(chunks[0])}")
+            logger.info(f"Chunk token count: {len(self.encoding.encode(chunks[0]))}")
+        
+        result = [self._split_chunk(chunk) if len(self.encoding.encode(chunk)) > self.max_tokens_per_chunk else chunk for chunk in chunks]
+        
+        logger.info(f"Final number of chunks: {len(result)}")
+        
+        return result
 
     def _split_chunk(self, chunk: str) -> str:
         """
@@ -179,13 +197,27 @@ class BaseTextProcessor:
         current_token_count = 0
         for sentence in sentences:
             sentence_token_count = len(self.encoding.encode(sentence))
-            if current_token_count + sentence_token_count > self.max_tokens_per_chunk:
+            if sentence_token_count > self.max_tokens_per_chunk:
+                # 如果单个句子超过最大 token 数，强制分割
+                words = sentence.split()
+                for word in words:
+                    word_token_count = len(self.encoding.encode(word))
+                    if current_token_count + word_token_count > self.max_tokens_per_chunk:
+                        if current_sub_chunk:
+                            sub_chunks.append(" ".join(current_sub_chunk))
+                        current_sub_chunk = [word]
+                        current_token_count = word_token_count
+                    else:
+                        current_sub_chunk.append(word)
+                        current_token_count += word_token_count
+            elif current_token_count + sentence_token_count > self.max_tokens_per_chunk:
                 if current_sub_chunk:
                     sub_chunks.append(" ".join(current_sub_chunk))
-                current_sub_chunk = []
-                current_token_count = 0
-            current_sub_chunk.append(sentence)
-            current_token_count += sentence_token_count
+                current_sub_chunk = [sentence]
+                current_token_count = sentence_token_count
+            else:
+                current_sub_chunk.append(sentence)
+                current_token_count += sentence_token_count
         if current_sub_chunk:
             sub_chunks.append(" ".join(current_sub_chunk))
         return " ".join(sub_chunks)
@@ -362,7 +394,7 @@ class ProcessingStrategy:
             input_text = self._format_input(original_text, current_text, previous_outputs, processor.memory)
             messages = [
                 {"role": "system", "content": system_prompt},
-                {"role": "user", "content": input_text}
+{"role": "user", "content": input_text}
             ]
             logger.info(f"Processing strategy: {self.config.prompt_name}")
             result = APIClient.query_api(messages, self.config.model)
