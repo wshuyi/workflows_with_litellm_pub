@@ -1,0 +1,25 @@
+strategies:
+  - model: openrouter/google/gemini-flash-1.5
+    prompt_name: translate_cn
+    input_format: "{{text}}"
+    output_name: translation
+
+  - model: openrouter/anthropic/claude-3.5-sonnet
+    prompt_name: comment_cn_trans
+    input_format: |
+      original text:
+      {{text}}
+      translation:
+      {{translation}}
+    output_name: reflection
+
+  - model: openrouter/anthropic/claude-3.5-sonnet
+    prompt_name: improved_trans_cn
+    input_format: |
+      original text:
+      {{text}}
+      translation:
+      {{translation}}
+      comments:
+      {{reflection}}
+    output_name: improvement
