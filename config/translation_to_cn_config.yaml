@@ -1,5 +1,5 @@
 strategies:
-  - model: openrouter/google/gemini-flash-1.5
+  - model: openrouter/openai/gpt-4o-mini
     prompt_name: translate_cn
     input_format: "{{text}}"
     output_name: translation
@@ -13,7 +13,7 @@ strategies:
       {{translation}}
     output_name: reflection
 
-  - model: openrouter/anthropic/claude-3.5-sonnet
+  - model: openrouter/openai/gpt-4o-mini
     prompt_name: improved_trans_cn
     input_format: |
       original text:

@@ -1,9 +1,9 @@
 strategies:
-  - model: openrouter/google/gemini-flash-1.5
+  - model: openrouter/openai/gpt-4o-mini
     prompt_name: translate_en
     input_format: "{{text}}"
     output_name: translation
-  - model: openrouter/openai/gpt-4o
+  - model: openrouter/anthropic/claude-3.5-sonnet
     prompt_name: comment_en_trans
     input_format: |
       original text:
@@ -11,7 +11,7 @@ strategies:
       translation:
       {{translation}}
     output_name: reflection
-  - model: openrouter/anthropic/claude-3.5-sonnet
+  - model: openrouter/openai/gpt-4o-mini
     prompt_name: improved_trans_en
     input_format: |
       original text:

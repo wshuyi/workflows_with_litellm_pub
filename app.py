@@ -155,7 +155,7 @@ class BaseTextProcessor:
         
         text_splitter = RecursiveCharacterTextSplitter(
             chunk_size=self.max_tokens_per_chunk,
-            chunk_overlap=50,
+            chunk_overlap=20,
             length_function=lambda t: len(self.encoding.encode(t)),
             separators=separators
         )

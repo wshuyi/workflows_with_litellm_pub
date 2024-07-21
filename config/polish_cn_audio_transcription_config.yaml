@@ -7,7 +7,7 @@ strategies:
       vocabulary:
       {{vocab}}
     output_name: correction
-  - model: openrouter/01-ai/yi-large
+  - model: openrouter/anthropic/claude-3.5-sonnet
     prompt_name: comment_cn_audio_transcription
     input_format: |
       original text:
@@ -15,7 +15,7 @@ strategies:
       correction:
       {{correction}}
     output_name: reflection
-  - model: openrouter/qwen/qwen-2-72b-instruct
+  - model: openrouter/openai/gpt-4o-mini
     prompt_name: improve_transcription_wsy_cn
     input_format: |
       original text:

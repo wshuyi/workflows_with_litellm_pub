@@ -1,9 +1,9 @@
 strategies:
-  - model: openai/gpt-4o
+  - model: openrouter/anthropic/claude-3.5-sonnet
     prompt_name: comment_cn_draft
     input_format: "{{text}}"
     output_name: reflection
-  - model: openrouter/anthropic/claude-3.5-sonnet
+  - model: openrouter/openai/gpt-4o-mini
     prompt_name: improve_md_writing_based_comments_wsy_cn
     input_format: |
       original text:
