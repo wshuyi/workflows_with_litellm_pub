@@ -14,44 +14,30 @@ import re
 import logging
 from contextlib import contextmanager
 import time
-from datetime import datetime, timedelta
+from datetime import datetime, timezone, timedelta
 from exa_py import Exa
 
-# 设置日志文件路径
+# Set up logging
 current_dir = os.path.dirname(os.path.abspath(__file__))
 log_dir = os.path.join(current_dir, 'logs')
 os.makedirs(log_dir, exist_ok=True)
 log_file = os.path.join(log_dir, f'text_processor_{datetime.now().strftime("%Y%m%d_%H%M%S")}.log')
 
-# 配置日志记录
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s',
     handlers=[
         logging.FileHandler(log_file),
-        logging.StreamHandler()  # 这会同时将日志输出到控制台
+        logging.StreamHandler()
     ]
 )
 
 logger = logging.getLogger(__name__)
-
-# 记录脚本开始执行的信息
 logger.info("Text processing script started")
 
 class ConfigValidator:
-    """Validates the configuration file for the text processing workflow."""
-
     @staticmethod
     def validate_config(config: Dict[str, Any]) -> None:
-        """
-        Validates the configuration dictionary.
-
-        Args:
-            config (Dict[str, Any]): The configuration dictionary to validate.
-
-        Raises:
-            ValueError: If the configuration is invalid.
-        """
         if 'strategies' not in config:
             raise ValueError("Configuration must contain 'strategies' key")
         
@@ -68,23 +54,8 @@ class ConfigValidator:
                     raise ValueError(f"Strategy {i} is missing required key: {key}")
 
 class APIClient:
-    """Handles API calls to language models."""
-
     @staticmethod
     def query_api(messages: List[Dict[str, str]], model: str) -> str:
-        """
-        Queries the API with the given messages and model.
-
-        Args:
-            messages (List[Dict[str, str]]): The messages to send to the API.
-            model (str): The model to use for the API call.
-
-        Returns:
-            str: The response from the API.
-
-        Raises:
-            Exception: If an error occurs during the API call.
-        """
         if model.startswith("openai/") or model.find("/") == -1:
             load_dotenv(override=True)
             base_url = os.getenv("OPENAI_API_BASE")
@@ -104,26 +75,15 @@ class APIClient:
             raise
 
 class BaseTextProcessor:
-    """Base class for text processing operations."""
-
     def __init__(self, max_tokens_per_chunk: int = 1000):
         self.max_tokens_per_chunk = max_tokens_per_chunk
         self.encoding = tiktoken.encoding_for_model("gpt-4-turbo")
         self.config = {}
         self.chunk_count = 0
         self.current_chunk_number = 0
-        self.memory = {}  # 新增：用于存储 memory 文件内容
+        self.memory = {}
 
     def preprocess_text(self, text: str) -> str:
-        """
-        Preprocesses the input text by joining lines within paragraphs.
-
-        Args:
-            text (str): The input text to preprocess.
-
-        Returns:
-            str: The preprocessed text.
-        """
         paragraphs = text.split('\n\n')
         processed_paragraphs = []
         for paragraph in paragraphs:
@@ -151,7 +111,7 @@ class BaseTextProcessor:
         logger.info(f"Max chars per chunk: {max_chars}")
         logger.info(f"Max tokens per chunk: {self.max_tokens_per_chunk}")
         
-        separators = ["\n\n", "\n", "。", "！", "？", "；", "，", ".", "!", "?", ";", ",", " ", ""]
+        separators = ["\n\n", "\n", ". ", "!", "?", ";", ",", ".", "!", "?", ";", ",", " ", ""]
         
         text_splitter = RecursiveCharacterTextSplitter(
             chunk_size=self.max_tokens_per_chunk,
@@ -160,7 +120,6 @@ class BaseTextProcessor:
             separators=separators
         )
         
-        # 打印每个分隔符的出现次数
         for sep in separators:
             count = preprocessed_text.count(sep)
             logger.info(f"Separator '{sep}' appears {count} times")
@@ -169,7 +128,6 @@ class BaseTextProcessor:
         
         logger.info(f"Number of chunks after initial split: {len(chunks)}")
         
-        # 如果只有一个块，打印更多信息
         if len(chunks) == 1:
             logger.warning("Only one chunk created. Printing chunk info:")
             logger.info(f"Chunk length: {len(chunks[0])}")
@@ -182,23 +140,13 @@ class BaseTextProcessor:
         return result
 
     def _split_chunk(self, chunk: str) -> str:
-        """
-        Splits a chunk into sub-chunks if it exceeds the maximum token limit.
-
-        Args:
-            chunk (str): The chunk to split.
-
-        Returns:
-            str: The split chunk.
-        """
-        sentences = re.split(r'(?<=[。！？.!?])\s*', chunk)
+        sentences = re.split(r'(?<=[. !?.!?])\s*', chunk)
         sub_chunks = []
         current_sub_chunk = []
         current_token_count = 0
         for sentence in sentences:
             sentence_token_count = len(self.encoding.encode(sentence))
             if sentence_token_count > self.max_tokens_per_chunk:
-                # 如果单个句子超过最大 token 数，强制分割
                 words = sentence.split()
                 for word in words:
                     word_token_count = len(self.encoding.encode(word))
@@ -224,16 +172,6 @@ class BaseTextProcessor:
 
     @contextmanager
     def open_file(self, file_path: str, mode: str):
-        """
-        Context manager for safely opening and closing files.
-
-        Args:
-            file_path (str): The path to the file.
-            mode (str): The mode in which to open the file.
-
-        Yields:
-            file object: The opened file object.
-        """
         try:
             file = open(file_path, mode, encoding='utf-8')
             yield file
@@ -241,18 +179,6 @@ class BaseTextProcessor:
             file.close()
 
     def read_system_prompt(self, pattern_name: str) -> str:
-        """
-        Reads the system prompt from a file.
-
-        Args:
-            pattern_name (str): The name of the prompt pattern.
-
-        Returns:
-            str: The content of the system prompt.
-
-        Raises:
-            IOError: If there's an error reading the file.
-        """
         current_dir = os.path.dirname(os.path.abspath(__file__))
         system_prompt_path = os.path.join(current_dir, 'patterns', pattern_name, 'system.md')
         try:
@@ -263,62 +189,21 @@ class BaseTextProcessor:
             raise
 
     def process_chunk(self, chunk: str) -> str:
-        """
-        Processes a single chunk of text. To be implemented by subclasses.
-
-        Args:
-            chunk (str): The chunk of text to process.
-
-        Returns:
-            str: The processed chunk of text.
-
-        Raises:
-            NotImplementedError: If not implemented by a subclass.
-        """
         raise NotImplementedError("Subclasses must implement process_chunk method")
 
     def process_text(self, text: str) -> List[str]:
-        """
-        Processes the entire input text by splitting it into chunks and processing each chunk.
-
-        Args:
-            text (str): The input text to process.
-
-        Returns:
-            List[str]: A list of processed text chunks.
-        """
         chunks = self.split_text(text)
         self.chunk_count = len(chunks)
         logger.info(f"Text split into {self.chunk_count} chunks.")
         return [self.process_chunk(chunk) for chunk in tqdm(chunks, desc="Processing chunks")]
 
     def set_config(self, key: str, value: Any):
-        """
-        Sets a configuration value.
-
-        Args:
-            key (str): The configuration key.
-            value (Any): The configuration value.
-        """
         self.config[key] = value
 
     def get_config(self, key: str, default: Any = None) -> Any:
-        """
-        Gets a configuration value.
-
-        Args:
-            key (str): The configuration key.
-            default (Any, optional): The default value to return if the key is not found. Defaults to None.
-
-        Returns:
-            Any: The configuration value.
-        """
         return self.config.get(key, default)
 
     def load_memory_files(self):
-        """
-        Loads all .md files from the memory directory and stores their content in self.memory.
-        """
         memory_dir = os.path.join(current_dir, 'memory')
         if not os.path.exists(memory_dir):
             logger.warning(f"Memory directory not found: {memory_dir}")
@@ -327,7 +212,7 @@ class BaseTextProcessor:
         for file_name in os.listdir(memory_dir):
             if file_name.endswith('.md'):
                 file_path = os.path.join(memory_dir, file_name)
-                key = file_name[:-3]  # Remove '.md' from the file name
+                key = file_name[:-3]
                 try:
                     with self.open_file(file_path, 'r') as f:
                         self.memory[key] = f.read().strip()
@@ -336,8 +221,6 @@ class BaseTextProcessor:
                     logger.error(f"Error reading memory file {file_name}: {e}")
 
 class StrategyConfig:
-    """Configuration for a processing strategy."""
-
     def __init__(self, tool_name: str = None, model: str = None, prompt_name: str = None, input_format: str = None, output_name: str = None):
         self.tool_name = tool_name
         self.model = model
@@ -346,93 +229,55 @@ class StrategyConfig:
         self.output_name = output_name
 
 class ProcessingStrategy:
-    """Represents a single processing strategy in the workflow."""
-
     def __init__(self, config: StrategyConfig):
         self.config = config
 
-    def _format_input(self, original_text: str, current_text: str, previous_outputs: Dict[str, str], memory: Dict[str, str]) -> str:
-        """
-        Formats the input for the current strategy based on the input format, previous outputs, and memory.
-
-        Args:
-            original_text (str): The original unprocessed text.
-            current_text (str): The current state of the text being processed.
-            previous_outputs (Dict[str, str]): The outputs from previous strategies.
-            memory (Dict[str, str]): The memory files content.
-
-        Returns:
-            str: The formatted input text for the current strategy.
-        """
-        input_text = self.config.input_format
-        input_text = input_text.replace("{{text}}", original_text)
+    def _format_input(self, input_format: str, chunk: str, previous_outputs: Dict[str, str], original_text: str) -> str:
+        formatted_input = input_format.replace("{{text}}", original_text)
         for key, value in previous_outputs.items():
-            input_text = re.sub(r'\{\{' + re.escape(key) + r'\}\}', value, input_text)
-        for key, value in memory.items():
-            input_text = re.sub(r'\{\{' + re.escape(key) + r'\}\}', value, input_text)
-        return input_text
+            formatted_input = formatted_input.replace(f"{{{{{key}}}}}", value)
+        return formatted_input
 
-    def process(self, original_text: str, current_text: str, processor: 'TextProcessor', previous_outputs: Dict[str, str]) -> str:
-        """
-        Processes the text using the current strategy.
-
-        Args:
-            original_text (str): The original unprocessed text.
-            current_text (str): The current state of the text being processed.
-            processor (TextProcessor): The text processor instance.
-            previous_outputs (Dict[str, str]): The outputs from previous strategies.
-
-        Returns:
-            str: The processed text after applying the current strategy.
-        """
+    def process(self, chunk: str, processor: 'TextProcessor', previous_outputs: Dict[str, str], original_text: str) -> str:
+        formatted_input = self._format_input(self.config.input_format, chunk, previous_outputs, original_text)
+        
         if self.config.tool_name:
-            input_text = self._format_input(original_text, current_text, previous_outputs, processor.memory)
             logger.info(f"Processing tool: {self.config.tool_name}")
-            result = processor.execute_tool(self.config.tool_name, input_text)
+            result = processor.execute_tool(self.config.tool_name, formatted_input)
         else:
             system_prompt = processor.read_system_prompt(self.config.prompt_name)
-            input_text = self._format_input(original_text, current_text, previous_outputs, processor.memory)
             messages = [
                 {"role": "system", "content": system_prompt},
-{"role": "user", "content": input_text}
+                {"role": "user", "content": formatted_input}
             ]
             logger.info(f"Processing strategy: {self.config.prompt_name}")
             result = APIClient.query_api(messages, self.config.model)
         return result
 
 class TextProcessor(BaseTextProcessor):
-    """Main text processor that applies a series of processing strategies."""
-
     def __init__(self, strategies: List[ProcessingStrategy], max_tokens_per_chunk: int = 1000, verbose: bool = False):
         super().__init__(max_tokens_per_chunk)
         self.strategies = strategies
         self.verbose = verbose
         self.tools = {
-            "search_exa": self.search_exa
+            "search_exa": self.search_exa,
+            "exa_paper_search": self.exa_paper_search
         }
-        self.load_memory_files()  # 初始化时加载 memory 文件
+        self.load_memory_files()
+        load_dotenv()
 
     def process_chunk(self, chunk: str) -> str:
-        """
-        Processes a single chunk of text by applying all strategies in sequence.
-
-        Args:
-            chunk (str): The chunk of text to process.
-
-        Returns:
-            str: The processed chunk of text.
-        """
         self.current_chunk_number += 1
         print(f"\nProcessing chunk {self.current_chunk_number}/{self.chunk_count}")
         logger.info(f"Processing chunk {self.current_chunk_number}/{self.chunk_count}")
-        original_chunk = chunk
         result = chunk
         previous_outputs = {}
+        original_text = chunk  # Store the original input text
         for i, strategy in enumerate(self.strategies, 1):
             print(f"Applying strategy {i}...")
             logger.info(f"Applying strategy {i}...")
             start_time = time.time()
-            result = strategy.process(original_chunk, result, self, previous_outputs)
+            result = strategy.process(result, self, previous_outputs, original_text)
             end_time = time.time()
             previous_outputs[strategy.config.output_name] = result
             processing_time = end_time - start_time
@@ -450,33 +295,48 @@ class TextProcessor(BaseTextProcessor):
         return result
 
     def execute_tool(self, tool_name: str, input_text: str) -> str:
-        """
-        Executes a specified tool with the given input text.
-
-        Args:
-            tool_name (str): The name of the tool to execute.
-            input_text (str): The input text for the tool.
-
-        Returns:
-            str: The result of the tool execution.
-
-        Raises:
-            ValueError: If the specified tool is not found.
-        """
         if tool_name not in self.tools:
             raise ValueError(f"Tool '{tool_name}' not found")
-        return self.tools[tool_name](input_text)
+        
+        params = self.parse_multi_input(input_text)
+        if isinstance(params, str):
+            # Single parameter case
+            return self.tools[tool_name](params)
+        else:
+            # Multiple parameters case
+            return self.tools[tool_name](**params)
+
+    def parse_multi_input(self, input_text: str) -> Union[str, Dict[str, str]]:
+        input_text = input_text.strip()
+        if '\n' not in input_text and ':' not in input_text:
+            # Single line input without key-value pair
+            return input_text
+
+        params = {}
+        lines = input_text.split('\n')
+        current_param = None
+        current_value = []
+
+        for line in lines:
+            if ':' in line and not current_param:
+                key, value = line.split(':', 1)
+                current_param = key.strip()
+                current_value = [value.strip()]
+            elif current_param:
+                if ':' in line:
+                    params[current_param] = '\n'.join(current_value).strip()
+                    key, value = line.split(':', 1)
+                    current_param = key.strip()
+                    current_value = [value.strip()]
+                else:
+                    current_value.append(line.strip())
+
+        if current_param:
+            params[current_param] = '\n'.join(current_value).strip()
+        print(params)
+        return params
 
     def search_exa(self, query: str) -> str:
-        """
-        Performs a search using the Exa API.
-
-        Args:
-            query (str): The search query.
-
-        Returns:
-            str: The raw search results from Exa API.
-        """
         logger.info(f"Executing Exa search with query: {query}")
         exa = Exa(os.getenv("EXA_API_KEY"))
         start_date = (datetime.now() - timedelta(hours=72)).strftime("%Y-%m-%d")
@@ -497,23 +357,37 @@ class TextProcessor(BaseTextProcessor):
             logger.error(f"Error in Exa search: {str(e)}")
             return f"Error in Exa search: {str(e)}"
 
-class ConfigManager:
-    """Manages loading and validating configuration files."""
+    def exa_paper_search(self, query: str, start_year: str) -> str:
+        logger.info(f"Executing Exa paper search with query: {query} and start year: {start_year}")
+        date = datetime(int(start_year), 1, 1, tzinfo=timezone.utc)
+        start_published_date = date.strftime("%Y-%m-%dT%H:%M:%S.000Z")
 
+        exa = Exa(api_key=os.getenv("EXA_API_KEY"))
+        try:
+            result = exa.search_and_contents(
+                query,
+                type="neural",
+                use_autoprompt=True,
+                num_results=10,
+                text={
+                    "max_characters": 1000
+                },
+                category="research paper",
+                start_published_date=start_published_date,
+                highlights={
+                    "num_sentences": 3,
+                    "highlights_per_url": 3
+                }
+            )
+            logger.info("Exa paper search completed successfully")
+            return f"Search Results for query '{query}' from year {start_year}:\n\n{str(result)}"
+        except Exception as e:
+            logger.error(f"Error in Exa paper search: {str(e)}")
+            return f"Error in Exa paper search: {str(e)}"
+
+class ConfigManager:
     @staticmethod
     def load_config(workflow_type: str) -> Dict[str, Any]:
-        """
-        Loads and validates the configuration for a given workflow type.
-
-        Args:
-            workflow_type (str): The type of workflow to load the configuration for.
-
-        Returns:
-            Dict[str, Any]: The loaded and validated configuration.
-
-        Raises:
-            Exception: If there's an error loading or validating the configuration.
-        """
         current_dir = os.path.dirname(os.path.abspath(__file__))
         config_path = os.path.join(current_dir, 'config', f'{workflow_type}_config.yaml')
         try:
@@ -526,21 +400,8 @@ class ConfigManager:
             raise
 
 class ProcessorFactory:
-    """Factory class for creating TextProcessor instances based on configuration."""
-
     @staticmethod
     def create_processor(workflow_type: str, max_tokens: int, verbose: bool) -> TextProcessor:
-        """
-        Creates a TextProcessor instance based on the given workflow type and maximum tokens.
-
-        Args:
-            workflow_type (str): The type of workflow to create a processor for.
-            max_tokens (int): The maximum number of tokens per chunk.
-            verbose (bool): Whether to enable verbose output.
-
-        Returns:
-            TextProcessor: An instance of TextProcessor configured for the specified workflow.
-        """
         config = ConfigManager.load_config(workflow_type)
         strategies = []
         for strategy_config in config['strategies']:
@@ -548,16 +409,13 @@ class ProcessorFactory:
                 tool_name=strategy_config.get('tool_name'),
                 model=strategy_config.get('model'),
                 prompt_name=strategy_config.get('prompt_name'),
-                input_format=strategy_config['input_format'],
+                input_format=strategy_config.get('input_format'),
                 output_name=strategy_config['output_name']
             ))
             strategies.append(strategy_obj)
         return TextProcessor(strategies, max_tokens, verbose)
 
 def main():
-    """
-    Main function to run the text processing workflow.
-    """
     load_dotenv()
     parser = argparse.ArgumentParser(description="Process text with configurable workflows.")
     parser.add_argument("input_file", type=str, help="Path to the input text file")

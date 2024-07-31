@@ -1,0 +1,25 @@
+strategies:
+  - tool_name: exa_paper_search
+    input_format: "{{text}}"
+    output_name: exa_result
+  - model: openrouter/anthropic/claude-3.5-sonnet
+    prompt_name: academic_outliner
+    input_format: "{{exa_result}}"
+    output_name: outline
+  - model: openrouter/anthropic/claude-3.5-sonnet
+    prompt_name: academic_fill_outline_with_material
+    input_format: |
+      大纲(outline):
+      {{outline}}
+      搜索结果（search result）:
+      {{exa_result}}
+    output_name: outline_filled  
+  - model: openrouter/anthropic/claude-3.5-sonnet
+    prompt_name: literature_review_exa
+    input_format: |
+      填充后的大纲：
+      {{outline_filled}}
+      搜索结果（search result）:
+      {{exa_result}}
+    output_name: literature_review_section
+    
