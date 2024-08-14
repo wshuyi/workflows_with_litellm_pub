@@ -391,7 +391,7 @@ class ConfigManager:
         current_dir = os.path.dirname(os.path.abspath(__file__))
         config_path = os.path.join(current_dir, 'config', f'{workflow_type}_config.yaml')
         try:
-            with open(config_path, 'r') as f:
+            with open(config_path, 'r', encoding='utf-8') as f:
                 config = yaml.safe_load(f)
             ConfigValidator.validate_config(config)
             return config
