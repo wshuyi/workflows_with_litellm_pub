@@ -1,21 +1,26 @@
 strategies:
-  - tool_name: search_exa
-    input_format: "{{text}}"
-    output_name: exa_result
-  - model: openrouter/anthropic/claude-3.5-sonnet
-    prompt_name: outliner_wsy
-    input_format: "{{exa_result}}"
-    output_name: outline
-  - model: openrouter/anthropic/claude-3.5-sonnet
-    prompt_name: fill_draft_with_material
-    input_format: |
-      search result:
-      {{exa_result}}
-      outline:
-      {{outline}}
-    output_name: draft_filled  
-  - model: openrouter/anthropic/claude-3.5-sonnet
-    prompt_name: write_wsy_tech_blog
-    input_format: "{{draft_filled}}"
-    output_name: tech_blog_draft
-    
+- input_format: '{{text}}'
+  output_name: exa_result
+  tool_name: exa_search
+  tool_params:
+    category: tweet
+- input_format: '{{exa_result}}'
+  model: openrouter/anthropic/claude-3.5-sonnet
+  output_name: outline
+  prompt_name: outliner_wsy
+- input_format: 'search result:
+
+    {{exa_result}}
+
+    outline:
+
+    {{outline}}
+
+    '
+  model: openrouter/anthropic/claude-3.5-sonnet
+  output_name: draft_filled
+  prompt_name: fill_draft_with_material
+- input_format: '{{draft_filled}}'
+  model: openrouter/anthropic/claude-3.5-sonnet
+  output_name: tech_blog_draft
+  prompt_name: write_wsy_tech_blog

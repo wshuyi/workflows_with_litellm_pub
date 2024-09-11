@@ -1,79 +1,171 @@
 import argparse
 from pathlib import Path
-import os
-from dotenv import load_dotenv
-import pyperclip
-from typing import List, Dict, Any, Union, Callable
-from tqdm import tqdm
 import sys
+import pyperclip
+from dotenv import load_dotenv
+import os
+import yaml
+import json
+from typing import List, Dict, Any, Union, Callable
+import re
+import time
+from tqdm import tqdm
 import tiktoken
 from langchain_text_splitters import RecursiveCharacterTextSplitter
-from litellm import completion
-import yaml
-import re
-import logging
+from datetime import datetime, timedelta
 from contextlib import contextmanager
-import time
-from datetime import datetime, timezone, timedelta
+import logging
 from exa_py import Exa
+from litellm import completion
 
-# Set up logging
-current_dir = os.path.dirname(os.path.abspath(__file__))
-log_dir = os.path.join(current_dir, 'logs')
-os.makedirs(log_dir, exist_ok=True)
-log_file = os.path.join(log_dir, f'text_processor_{datetime.now().strftime("%Y%m%d_%H%M%S")}.log')
+# Utils
+def setup_logging(log_dir='logs'):
+    current_dir = os.path.dirname(os.path.abspath(__file__))
+    log_dir = os.path.join(current_dir, log_dir)
+    os.makedirs(log_dir, exist_ok=True)
+    log_file = os.path.join(log_dir, f'text_processor_{datetime.now().strftime("%Y%m%d_%H%M%S")}.log')
 
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.FileHandler(log_file),
-        logging.StreamHandler()
-    ]
-)
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s - %(levelname)s - %(message)s',
+        handlers=[
+            logging.FileHandler(log_file),
+            logging.StreamHandler()
+        ]
+    )
 
-logger = logging.getLogger(__name__)
-logger.info("Text processing script started")
+    return logging.getLogger(__name__)
 
+@contextmanager
+def open_file(file_path: str, mode: str):
+    try:
+        file = open(file_path, mode, encoding='utf-8')
+        yield file
+    finally:
+        file.close()
+
+logger = setup_logging()
+
+# API Client
+class APIClient:
+    def __init__(self, model: str):
+        load_dotenv(override=True)
+        self.model = model
+        self.api_base = None
+        self.api_key = None
+
+        if model.startswith("openai/"):
+            self.api_base = os.getenv('OPENAI_API_BASE')
+            self.api_key = os.getenv('OPENAI_API_KEY')
+
+    def generate(self, input_text: str) -> str:
+        messages = [{"role": "user", "content": input_text}]
+        return self.query_api(messages)
+
+    def query_api(self, messages: List[Dict[str, str]]) -> str:
+        try:
+            kwargs = {}
+            if self.api_base:
+                kwargs['api_base'] = self.api_base
+            if self.api_key:
+                kwargs['api_key'] = self.api_key
+
+            response = completion(
+                model=self.model,
+                messages=messages,
+                temperature=0.1,
+                **kwargs
+            )
+            return response.choices[0].message.content
+        except Exception as e:
+            logger.error(f"Error calling API for model {self.model}: {e}")
+            raise
+
+# Config Manager
 class ConfigValidator:
     @staticmethod
     def validate_config(config: Dict[str, Any]) -> None:
-        if 'strategies' not in config:
-            raise ValueError("Configuration must contain 'strategies' key")
+        required_keys = ['strategies']
+        for key in required_keys:
+            if key not in config:
+                raise ValueError(f"Missing required key in config: {key}")
         
-        for i, strategy in enumerate(config['strategies']):
-            if 'tool_name' in strategy:
-                required_keys = ['tool_name', 'input_format', 'output_name']
-            elif 'model' in strategy:
-                required_keys = ['model', 'prompt_name', 'input_format', 'output_name']
-            else:
-                raise ValueError(f"Strategy {i} must contain either 'tool_name' or 'model'")
-            
-            for key in required_keys:
-                if key not in strategy:
-                    raise ValueError(f"Strategy {i} is missing required key: {key}")
+        if not isinstance(config['strategies'], list):
+            raise ValueError("'strategies' must be a list")
+        
+        for strategy in config['strategies']:
+            if 'tool_name' not in strategy and 'model' not in strategy:
+                raise ValueError("Each strategy must have either 'tool_name' or 'model'")
 
-class APIClient:
+class ConfigManager:
     @staticmethod
-    def query_api(messages: List[Dict[str, str]], model: str) -> str:
-        if model.startswith("openai/") or model.find("/") == -1:
-            load_dotenv(override=True)
-            base_url = os.getenv("OPENAI_API_BASE")
-            api_key = os.getenv("OPENAI_API_KEY")
-            kwargs = {"api_key": api_key, "base_url": base_url}
-            logger.info(f"Using OpenAI API with base URL: {base_url}")
+    def load_config(workflow_name: str, custom_config_path: str = None) -> Dict[str, Any]:
+        if custom_config_path:
+            config_path = custom_config_path
         else:
-            kwargs = {}
+            current_dir = os.path.dirname(os.path.abspath(__file__))
+            config_path = os.path.join(current_dir, 'config', f'{workflow_name}_config.yaml')
+        
+        if not os.path.exists(config_path):
+            raise FileNotFoundError(f"Config file not found: {config_path}")
         
         try:
-            response = completion(model=model, messages=messages, temperature=0.1, **kwargs)
-            answer = response.choices[0].message.content
-            logger.debug(f"API response: {answer}")
-            return answer
+            with open(config_path, 'r') as f:
+                config = yaml.safe_load(f)
+            ConfigValidator.validate_config(config)
+            return config
         except Exception as e:
-            logger.error(f"Error calling API: {e}")
+            logger.error(f"Error loading configuration: {e}")
             raise
 
+# Processing Strategy
+class StrategyConfig:
+    def __init__(self, tool_name: str = None, model: str = None, prompt_name: str = None, 
+                 input_format: str = None, output_name: str = None, tool_params: Dict[str, Any] = None):
+        self.tool_name = tool_name
+        self.model = model
+        self.prompt_name = prompt_name
+        self.input_format = input_format
+        self.output_name = output_name
+        self.tool_params = tool_params or {}
+
+class ProcessingStrategy:
+    def __init__(self, config: Dict[str, Any]):
+        self.config = StrategyConfig(**config)
+        self.tool_params = self.config.tool_params
+
+    def process(self, chunk: str, processor: 'TextProcessor', previous_outputs: Dict[str, str]) -> str:
+        logger.debug(f"Processing strategy with config: {self.config.__dict__}")
+        
+        try:
+            if self.config.tool_name:
+                result = processor.execute_tool(self.config.tool_name, chunk, self.tool_params)
+            elif self.config.model:
+                prompt = self.prepare_prompt(chunk, processor, previous_outputs)
+                result = processor.execute_model(self.config.model, prompt)
+            else:
+                raise ValueError("Neither tool_name nor model is specified in the strategy configuration")
+            
+            if result is None:
+                logger.warning(f"Strategy {self.config.prompt_name or self.config.tool_name} returned None")
+                return ""
+            return result
+        except Exception as e:
+            logger.error(f"Error in strategy {self.config.prompt_name or self.config.tool_name}: {str(e)}")
+            return ""
+
+    def prepare_prompt(self, chunk: str, processor: 'TextProcessor', previous_outputs: Dict[str, str]) -> str:
+        prompt_template = processor.read_system_prompt(self.config.prompt_name)
+        input_format = self.config.input_format
+
+        for key, value in previous_outputs.items():
+            input_format = input_format.replace(f"{{{{{key}}}}}", value)
+        input_format = input_format.replace("{{text}}", chunk)
+        input_format = input_format.replace("{{memory_vocab}}", processor.memory.get('vocab', ''))
+
+        return f"{prompt_template}\n\n{input_format}"
+
+# Text Processor
 class BaseTextProcessor:
     def __init__(self, max_tokens_per_chunk: int = 1000):
         self.max_tokens_per_chunk = max_tokens_per_chunk
@@ -82,6 +174,7 @@ class BaseTextProcessor:
         self.chunk_count = 0
         self.current_chunk_number = 0
         self.memory = {}
+        self.load_memory_files()
 
     def preprocess_text(self, text: str) -> str:
         paragraphs = text.split('\n\n')
@@ -94,7 +187,7 @@ class BaseTextProcessor:
                     processed_lines.append(line)
                 elif (len(line) > 0 and not line[0].isupper() and not line[0].isdigit() and
                       i > 0 and len(lines[i-1].strip()) > 0 and
-                      lines[i-1].strip()[-1] not in '.!?:;'):
+                      lines[i-1].strip()[-1] not in '.!?.!?]'):
                     processed_lines[-1] += ' ' + line.strip()
                 else:
                     processed_lines.append(line)
@@ -120,18 +213,9 @@ class BaseTextProcessor:
             separators=separators
         )
         
-        for sep in separators:
-            count = preprocessed_text.count(sep)
-            logger.info(f"Separator '{sep}' appears {count} times")
-        
         chunks = text_splitter.split_text(preprocessed_text)
         
         logger.info(f"Number of chunks after initial split: {len(chunks)}")
-        
-        if len(chunks) == 1:
-            logger.warning("Only one chunk created. Printing chunk info:")
-            logger.info(f"Chunk length: {len(chunks[0])}")
-            logger.info(f"Chunk token count: {len(self.encoding.encode(chunks[0]))}")
         
         result = [self._split_chunk(chunk) if len(self.encoding.encode(chunk)) > self.max_tokens_per_chunk else chunk for chunk in chunks]
         
@@ -170,40 +254,18 @@ class BaseTextProcessor:
             sub_chunks.append(" ".join(current_sub_chunk))
         return " ".join(sub_chunks)
 
-    @contextmanager
-    def open_file(self, file_path: str, mode: str):
-        try:
-            file = open(file_path, mode, encoding='utf-8')
-            yield file
-        finally:
-            file.close()
-
     def read_system_prompt(self, pattern_name: str) -> str:
         current_dir = os.path.dirname(os.path.abspath(__file__))
         system_prompt_path = os.path.join(current_dir, 'patterns', pattern_name, 'system.md')
         try:
-            with self.open_file(system_prompt_path, 'r') as f:
+            with open_file(system_prompt_path, 'r') as f:
                 return f.read().strip()
         except IOError as e:
             logger.error(f"Error reading system prompt: {e}")
             raise
 
-    def process_chunk(self, chunk: str) -> str:
-        raise NotImplementedError("Subclasses must implement process_chunk method")
-
-    def process_text(self, text: str) -> List[str]:
-        chunks = self.split_text(text)
-        self.chunk_count = len(chunks)
-        logger.info(f"Text split into {self.chunk_count} chunks.")
-        return [self.process_chunk(chunk) for chunk in tqdm(chunks, desc="Processing chunks")]
-
-    def set_config(self, key: str, value: Any):
-        self.config[key] = value
-
-    def get_config(self, key: str, default: Any = None) -> Any:
-        return self.config.get(key, default)
-
     def load_memory_files(self):
+        current_dir = os.path.dirname(os.path.abspath(__file__))
         memory_dir = os.path.join(current_dir, 'memory')
         if not os.path.exists(memory_dir):
             logger.warning(f"Memory directory not found: {memory_dir}")
@@ -214,248 +276,190 @@ class BaseTextProcessor:
                 file_path = os.path.join(memory_dir, file_name)
                 key = file_name[:-3]
                 try:
-                    with self.open_file(file_path, 'r') as f:
+                    with open_file(file_path, 'r') as f:
                         self.memory[key] = f.read().strip()
                     logger.info(f"Loaded memory file: {file_name}")
                 except IOError as e:
                     logger.error(f"Error reading memory file {file_name}: {e}")
 
-class StrategyConfig:
-    def __init__(self, tool_name: str = None, model: str = None, prompt_name: str = None, input_format: str = None, output_name: str = None):
-        self.tool_name = tool_name
-        self.model = model
-        self.prompt_name = prompt_name
-        self.input_format = input_format
-        self.output_name = output_name
-
-class ProcessingStrategy:
-    def __init__(self, config: StrategyConfig):
-        self.config = config
-
-    def _format_input(self, input_format: str, chunk: str, previous_outputs: Dict[str, str], original_text: str) -> str:
-        formatted_input = input_format.replace("{{text}}", original_text)
-        for key, value in previous_outputs.items():
-            formatted_input = formatted_input.replace(f"{{{{{key}}}}}", value)
-        return formatted_input
-
-    def process(self, chunk: str, processor: 'TextProcessor', previous_outputs: Dict[str, str], original_text: str) -> str:
-        formatted_input = self._format_input(self.config.input_format, chunk, previous_outputs, original_text)
-        
-        if self.config.tool_name:
-            logger.info(f"Processing tool: {self.config.tool_name}")
-            result = processor.execute_tool(self.config.tool_name, formatted_input)
-        else:
-            system_prompt = processor.read_system_prompt(self.config.prompt_name)
-            messages = [
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": formatted_input}
-            ]
-            logger.info(f"Processing strategy: {self.config.prompt_name}")
-            result = APIClient.query_api(messages, self.config.model)
-        return result
-
-class TextProcessor(BaseTextProcessor):
-    def __init__(self, strategies: List[ProcessingStrategy], max_tokens_per_chunk: int = 1000, verbose: bool = False):
-        super().__init__(max_tokens_per_chunk)
-        self.strategies = strategies
-        self.verbose = verbose
-        self.tools = {
-            "search_exa": self.search_exa,
-            "exa_paper_search": self.exa_paper_search
-        }
-        self.load_memory_files()
-        load_dotenv()
-
-    def process_chunk(self, chunk: str) -> str:
-        self.current_chunk_number += 1
-        print(f"\nProcessing chunk {self.current_chunk_number}/{self.chunk_count}")
-        logger.info(f"Processing chunk {self.current_chunk_number}/{self.chunk_count}")
-        result = chunk
-        previous_outputs = {}
-        original_text = chunk  # Store the original input text
-        for i, strategy in enumerate(self.strategies, 1):
-            print(f"Applying strategy {i}...")
-            logger.info(f"Applying strategy {i}...")
-            start_time = time.time()
-            result = strategy.process(result, self, previous_outputs, original_text)
-            end_time = time.time()
-            previous_outputs[strategy.config.output_name] = result
-            processing_time = end_time - start_time
-            print(f"Strategy {i} completed in {processing_time:.2f} seconds")
-            if self.verbose:
-                print(f"Full result of strategy {i}:\n{result}")
-            else:
-                print(f"Result of strategy {i} (first 100 characters):")
-                print(result[:100] + "..." if len(result) > 100 else result)
-            
-            logger.info(f"Strategy {i} completed in {processing_time:.2f} seconds")
-            logger.info(f"Full result of strategy {i}:\n{result}")
-        print(f"Chunk {self.current_chunk_number} processing complete")
-        logger.info(f"Chunk {self.current_chunk_number} processing complete")
-        return result
-
-    def execute_tool(self, tool_name: str, input_text: str) -> str:
-        if tool_name not in self.tools:
-            raise ValueError(f"Tool '{tool_name}' not found")
-        
-        params = self.parse_multi_input(input_text)
-        if isinstance(params, str):
-            # Single parameter case
-            return self.tools[tool_name](params)
-        else:
-            # Multiple parameters case
-            return self.tools[tool_name](**params)
-
-    def parse_multi_input(self, input_text: str) -> Union[str, Dict[str, str]]:
-        input_text = input_text.strip()
-        if '\n' not in input_text and ':' not in input_text:
-            # Single line input without key-value pair
-            return input_text
-
-        params = {}
-        lines = input_text.split('\n')
-        current_param = None
-        current_value = []
-
-        for line in lines:
-            if ':' in line and not current_param:
-                key, value = line.split(':', 1)
-                current_param = key.strip()
-                current_value = [value.strip()]
-            elif current_param:
-                if ':' in line:
-                    params[current_param] = '\n'.join(current_value).strip()
-                    key, value = line.split(':', 1)
-                    current_param = key.strip()
-                    current_value = [value.strip()]
-                else:
-                    current_value.append(line.strip())
-
-        if current_param:
-            params[current_param] = '\n'.join(current_value).strip()
-        print(params)
-        return params
-
-    def search_exa(self, query: str) -> str:
-        logger.info(f"Executing Exa search with query: {query}")
+# Tools
+class SearchTools:
+    @staticmethod
+    def exa_search(query: str, category: str = "tweet", start_date: str = None) -> str:
+        logger.info(f"Executing Exa search with query: {query}, category: {category}")
         exa = Exa(os.getenv("EXA_API_KEY"))
-        start_date = (datetime.now() - timedelta(hours=72)).strftime("%Y-%m-%d")
+        
+        if start_date is None and category == "tweet":
+            start_date = (datetime.now() - timedelta(hours=72)).strftime("%Y-%m-%d")
+        
         try:
             results = exa.search_and_contents(
                 query,
                 num_results=10,
                 start_published_date=start_date,
                 use_autoprompt=True,
-                category="tweet",
+                category=category,
                 text={"max_characters": 2000},
                 highlights={"highlights_per_url": 2, "num_sentences": 1, "query": f"This is the highlight query: {query}"}
             )
             
-            logger.info("Exa search completed successfully")
+            logger.info(f"Exa {category} search completed successfully")
             return f'# Topic: {query}\n{str(results)}'
         except Exception as e:
-            logger.error(f"Error in Exa search: {str(e)}")
-            return f"Error in Exa search: {str(e)}"
+            logger.error(f"Error in Exa {category} search: {str(e)}")
+            return f"Error in Exa {category} search: {str(e)}"
 
-    def exa_paper_search(self, query: str, start_year: str) -> str:
-        logger.info(f"Executing Exa paper search with query: {query} and start year: {start_year}")
-        date = datetime(int(start_year), 1, 1, tzinfo=timezone.utc)
-        start_published_date = date.strftime("%Y-%m-%dT%H:%M:%S.000Z")
+class TextProcessor(BaseTextProcessor):
+    def __init__(self, config: Dict[str, Any], max_tokens_per_chunk: int = 1000, verbose: bool = False):
+        super().__init__(max_tokens_per_chunk)
+        self.config = config
+        self.verbose = verbose
+        self.tools = self.load_tools()
+        self.models = self.load_models()
+        self.strategies = self.load_strategies()
+        
+        logger.debug(f"Initialized TextProcessor with config: {self.config}")
+        logger.debug(f"Loaded tools: {self.tools}")
+        logger.debug(f"Loaded models: {self.models}")
+        logger.debug(f"Loaded strategies: {self.strategies}")
 
-        exa = Exa(api_key=os.getenv("EXA_API_KEY"))
-        try:
-            result = exa.search_and_contents(
-                query,
-                type="neural",
-                use_autoprompt=True,
-                num_results=10,
-                text={
-                    "max_characters": 1000
-                },
-                category="research paper",
-                start_published_date=start_published_date,
-                highlights={
-                    "num_sentences": 3,
-                    "highlights_per_url": 3
-                }
-            )
-            logger.info("Exa paper search completed successfully")
-            return f"Search Results for query '{query}' from year {start_year}:\n\n{str(result)}"
-        except Exception as e:
-            logger.error(f"Error in Exa paper search: {str(e)}")
-            return f"Error in Exa paper search: {str(e)}"
+    def load_tools(self) -> Dict[str, Callable]:
+        tools = {}
+        for strategy in self.config.get('strategies', []):
+            if 'tool_name' in strategy:
+                tool_name = strategy['tool_name']
+                if tool_name not in tools:
+                    if tool_name == 'exa_search':
+                        tools[tool_name] = SearchTools.exa_search
+                    elif hasattr(self, tool_name):
+                        tools[tool_name] = getattr(self, tool_name)
+                    else:
+                        # 尝试从全局命名空间导入
+                        tool = globals().get(tool_name)
+                        if tool:
+                            tools[tool_name] = tool
+                        else:
+                            raise ValueError(f"Tool '{tool_name}' not found")
+        logger.debug(f"Loaded tools: {tools}")
+        return tools
 
-class ConfigManager:
-    @staticmethod
-    def load_config(workflow_type: str) -> Dict[str, Any]:
-        current_dir = os.path.dirname(os.path.abspath(__file__))
-        config_path = os.path.join(current_dir, 'config', f'{workflow_type}_config.yaml')
-        try:
-            with open(config_path, 'r') as f:
-                config = yaml.safe_load(f)
-            ConfigValidator.validate_config(config)
-            return config
-        except Exception as e:
-            logger.error(f"Error loading or validating configuration: {e}")
-            raise
+    def load_models(self) -> Dict[str, Any]:
+        models = {}
+        for strategy in self.config.get('strategies', []):
+            if 'model' in strategy:
+                model_name = strategy['model']
+                if model_name not in models:
+                    models[model_name] = APIClient(model_name)
+        return models
+
+    def load_strategies(self) -> List[ProcessingStrategy]:
+        return [ProcessingStrategy(strategy_config) for strategy_config in self.config.get('strategies', [])]
+
+    def process_chunk(self, chunk: str) -> str:
+        self.current_chunk_number += 1
+        logger.info(f"Processing chunk {self.current_chunk_number}/{self.chunk_count}")
+        previous_outputs = {}
+        final_result = ""
+        for i, strategy in enumerate(self.strategies, 1):
+            logger.info(f"Applying strategy {i}: {strategy.config.prompt_name}")
+            try:
+                result = strategy.process(chunk, self, previous_outputs)
+                if result is None:
+                    logger.warning(f"Strategy {i} returned None")
+                    continue
+                previous_outputs[strategy.config.output_name] = result
+                final_result = result
+                logger.info(f"Intermediate result of strategy {i}:\n{result[:100] if result else 'Empty result'}...")
+            except Exception as e:
+                logger.error(f"Error in strategy {i}: {str(e)}")
+        return final_result
+
+    def process_text(self, text: str) -> List[str]:
+        chunks = self.split_text(text)
+        self.chunk_count = len(chunks)
+        logger.info(f"Text split into {self.chunk_count} chunks.")
+        return [self.process_chunk(chunk) for chunk in tqdm(chunks, desc="Processing chunks")]
+
+    def execute_model(self, model_name: str, input_text: str) -> str:
+        if model_name not in self.models:
+            raise ValueError(f"Model '{model_name}' not found")
+        client = self.models[model_name]
+        return client.generate(input_text)
+
+    def execute_tool(self, tool_name: str, chunk: str, tool_params: Dict[str, Any] = None) -> str:
+        if tool_name not in self.tools:
+            raise ValueError(f"Unknown tool: {tool_name}")
+        tool = self.tools[tool_name]
+        if tool_params:
+            return tool(chunk, **tool_params)
+        return tool(chunk)
 
 class ProcessorFactory:
     @staticmethod
-    def create_processor(workflow_type: str, max_tokens: int, verbose: bool) -> TextProcessor:
-        config = ConfigManager.load_config(workflow_type)
-        strategies = []
-        for strategy_config in config['strategies']:
-            strategy_obj = ProcessingStrategy(StrategyConfig(
-                tool_name=strategy_config.get('tool_name'),
-                model=strategy_config.get('model'),
-                prompt_name=strategy_config.get('prompt_name'),
-                input_format=strategy_config.get('input_format'),
-                output_name=strategy_config['output_name']
-            ))
-            strategies.append(strategy_obj)
-        return TextProcessor(strategies, max_tokens, verbose)
+    def create_processor(config: Dict[str, Any], max_tokens: int, verbose: bool) -> TextProcessor:
+        return TextProcessor(config, max_tokens, verbose)
+
+# Main application
+def save_output(results, output_path, output_format):
+    output_handlers = {
+        "json": lambda data, file: json.dump(data, file, indent=2),
+        "md": lambda data, file: file.write("\n\n".join(filter(None, data))),
+        "txt": lambda data, file: file.write("\n\n".join(filter(None, data)))
+    }
+    
+    with open_file(output_path, "w") as f:
+        output_handlers[output_format](results, f)
 
 def main():
-    load_dotenv()
+    load_dotenv(override=True)
+    
     parser = argparse.ArgumentParser(description="Process text with configurable workflows.")
     parser.add_argument("input_file", type=str, help="Path to the input text file")
     parser.add_argument("--workflow", type=str, required=True, help="Workflow type")
-    parser.add_argument("--max_tokens", type=int, default=1000, help="Maximum tokens per chunk")
+    parser.add_argument("--max_tokens", type=int, default=1200, help="Maximum tokens per chunk")
     parser.add_argument("--verbose", action="store_true", help="Enable verbose console output")
+    parser.add_argument("--config", type=str, help="Path to custom config file")
+    parser.add_argument("--output_format", type=str, default="md", choices=["md", "txt", "json"], help="Output file format")
     args = parser.parse_args()
 
+    try:
+        config = ConfigManager.load_config(args.workflow, args.config)
+        logger.debug(f"Loaded config: {config}")
+    except FileNotFoundError as e:
+        logger.error(f"Config file not found: {e}")
+        sys.exit(1)
+    
+    processor = ProcessorFactory.create_processor(config, args.max_tokens, args.verbose)
+
     input_path = Path(args.input_file).resolve()
-    output_path = input_path.parent / f"{args.workflow}-output.md"
+    output_path = input_path.parent / f"{args.workflow}-output.{args.output_format}"
 
     try:
-        processor = ProcessorFactory.create_processor(args.workflow, args.max_tokens, args.verbose)
-
-        with processor.open_file(input_path, "r") as f:
+        with open_file(input_path, "r") as f:
             text = f.read()
 
+        logger.info(f"Processing input text: {text[:100]}...")  # 只显示前100个字符
         results = processor.process_text(text)
 
-        with processor.open_file(output_path, "w") as f:
-            f.write("\n\n".join(results))
+        if not results:
+            logger.warning("No results generated")
+        else:
+            save_output(results, output_path, args.output_format)
+            logger.info(f"All chunks processed. Results saved to {output_path}")
 
-        print(f"\nAll chunks processed. Results saved to {output_path}")
-        logger.info(f"All chunks processed. Results saved to {output_path}")
+            with open_file(output_path, "r") as f:
+                content = f.read()
+            pyperclip.copy(content)
+            logger.info("Content copied to clipboard.")
 
-        with processor.open_file(output_path, "r") as f:
-            content = f.read()
-        pyperclip.copy(content)
-        print("Content copied to clipboard.")
-        logger.info("Content copied to clipboard.")
-
-        print("\nFinal processed text:")
-        print("="*50)
-        print(content)
-        print("="*50)
-        logger.info("Final processed text:\n" + "="*50 + "\n" + content + "\n" + "="*50)
-
+    except FileNotFoundError:
+        logger.error(f"Input file not found: {args.input_file}")
+        sys.exit(1)
+    except ValueError as ve:
+        logger.error(f"Invalid input: {ve}")
+        sys.exit(1)
     except Exception as e:
-        print(f"An error occurred: {e}")
-        logger.error(f"An error occurred: {e}")
+        logger.exception(f"An unexpected error occurred: {e}")
         sys.exit(1)
 
 if __name__ == "__main__":
