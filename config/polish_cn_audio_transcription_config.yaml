@@ -8,7 +8,7 @@ strategies:
     {{memory_vocab}}
 
     '
-  model: openrouter/anthropic/claude-3.5-sonnet
+  model: openai/gpt-4o
   output_name: correction
   prompt_name: correct_cn_audio_transcription
 - input_format: 'original text:
@@ -20,7 +20,7 @@ strategies:
     {{correction}}
 
     '
-  model: openrouter/anthropic/claude-3.5-sonnet
+  model: openai/gpt-4o
   output_name: reflection
   prompt_name: comment_cn_audio_transcription
 - input_format: 'original text:

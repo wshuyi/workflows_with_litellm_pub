@@ -8,13 +8,27 @@ strategies:
   model: openrouter/anthropic/claude-3.5-sonnet
   output_name: outline
   prompt_name: academic_outliner
-- input_format: "\u5927\u7EB2(outline):\n{{outline}}\n\u641C\u7D22\u7ED3\u679C\uFF08\
-    search result\uFF09:\n{{exa_result}}\n"
+- input_format: 'outline:
+
+    {{outline}}
+
+    search result:
+
+    {{exa_result}}
+
+    '
   model: openrouter/anthropic/claude-3.5-sonnet
   output_name: outline_filled
   prompt_name: academic_fill_outline_with_material
-- input_format: "\u586B\u5145\u540E\u7684\u5927\u7EB2\uFF1A\n{{outline_filled}}\n\u641C\
-    \u7D22\u7ED3\u679C\uFF08search result\uFF09:\n{{exa_result}}\n"
+- input_format: 'outline filled:
+
+    {{outline_filled}}
+
+    search result:
+
+    {{exa_result}}
+
+    '
   model: openrouter/anthropic/claude-3.5-sonnet
   output_name: literature_review_section
   prompt_name: literature_review_exa
