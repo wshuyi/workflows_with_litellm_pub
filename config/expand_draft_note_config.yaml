@@ -4,7 +4,7 @@ strategies:
     {{text}}
 
     '
-  model: openrouter/anthropic/claude-3.5-sonnet
+  model: openrouter/openai/o1-preview
   output_name: reflection
   prompt_name: comment_cn_draft
 - input_format: 'original text:

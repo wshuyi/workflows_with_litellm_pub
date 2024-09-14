@@ -8,10 +8,13 @@ import yaml
 # Load environment variables
 load_dotenv()
 
+# Get the directory of the current script
+current_dir = os.path.dirname(os.path.abspath(__file__))
+
 # Function to load available workflows
 def load_workflows():
     workflows = []
-    config_dir = 'config'
+    config_dir = os.path.join(current_dir, 'config')
     for file in os.listdir(config_dir):
         if file.endswith('_config.yaml'):
             workflows.append(file.replace('_config.yaml', ''))
@@ -19,7 +22,7 @@ def load_workflows():
 
 # Function to load config for a specific workflow
 def load_config(workflow):
-    config_path = f'config/{workflow}_config.yaml'
+    config_path = os.path.join(current_dir, 'config', f'{workflow}_config.yaml')
     with open(config_path, 'r') as f:
         return yaml.safe_load(f)
 
@@ -44,8 +47,9 @@ if st.button('Process'):
             temp_file.write(input_text)
             temp_file_path = temp_file.name
 
-        # Prepare command
-        cmd = ['poetry', 'run', 'python', 'app.py', temp_file_path, '--workflow', selected_workflow]
+        # Prepare command with full path to app.py
+        app_path = os.path.join(current_dir, 'app.py')
+        cmd = ['poetry', '--directory', current_dir, 'run', 'python', app_path, temp_file_path, '--workflow', selected_workflow]
 
         # Run the command
         try:

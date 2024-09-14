@@ -26,7 +26,7 @@ def setup_logging(log_dir='logs'):
     log_file = os.path.join(log_dir, f'text_processor_{datetime.now().strftime("%Y%m%d_%H%M%S")}.log')
 
     logging.basicConfig(
-        level=logging.INFO,
+        level=logging.INFO,  # 将级别改为 INFO
         format='%(asctime)s - %(levelname)s - %(message)s',
         handlers=[
             logging.FileHandler(log_file),
@@ -58,10 +58,6 @@ class APIClient:
             self.api_base = os.getenv('OPENAI_API_BASE')
             self.api_key = os.getenv('OPENAI_API_KEY')
 
-    def generate(self, input_text: str) -> str:
-        messages = [{"role": "user", "content": input_text}]
-        return self.query_api(messages)
-
     def query_api(self, messages: List[Dict[str, str]]) -> str:
         try:
             kwargs = {}
@@ -73,7 +69,7 @@ class APIClient:
             response = completion(
                 model=self.model,
                 messages=messages,
-                temperature=0.1,
+                # temperature=0.1,
                 **kwargs
             )
             return response.choices[0].message.content
@@ -159,9 +155,11 @@ class ProcessingStrategy:
         input_format = self.config.input_format
 
         for key, value in previous_outputs.items():
-            input_format = input_format.replace(f"{{{{{key}}}}}", value)
-        input_format = input_format.replace("{{text}}", chunk)
-        input_format = input_format.replace("{{memory_vocab}}", processor.memory.get('vocab', ''))
+            input_format = input_format.replace(f"{{{{{key}}}}}", f"{{{{{value}}}}}")
+        
+        input_format = input_format.replace("{{text}}", f"{{{{{chunk}}}}}")
+        input_format = input_format.replace("{{memory_vocab}}", f"{{{{{processor.memory.get('vocab', '')}}}}}")
+        input_format = input_format.replace("{{memory_blog_example}}", f"{{{{{processor.memory.get('blog_example', '')}}}}}")
 
         return f"{prompt_template}\n\n{input_format}"
 
@@ -258,8 +256,8 @@ class BaseTextProcessor:
         current_dir = os.path.dirname(os.path.abspath(__file__))
         system_prompt_path = os.path.join(current_dir, 'patterns', pattern_name, 'system.md')
         try:
-            with open_file(system_prompt_path, 'r') as f:
-                return f.read().strip()
+            with open(system_prompt_path, 'r', encoding='utf-8') as file:
+                return file.read().strip()
         except IOError as e:
             logger.error(f"Error reading system prompt: {e}")
             raise
@@ -310,18 +308,17 @@ class SearchTools:
             return f"Error in Exa {category} search: {str(e)}"
 
 class TextProcessor(BaseTextProcessor):
-    def __init__(self, config: Dict[str, Any], max_tokens_per_chunk: int = 1000, verbose: bool = False):
+    def __init__(self, config: Dict[str, Any], max_tokens_per_chunk: int = 1000, verbose: bool = False, debug: bool = False):
         super().__init__(max_tokens_per_chunk)
         self.config = config
         self.verbose = verbose
+        self.debug = debug
         self.tools = self.load_tools()
         self.models = self.load_models()
         self.strategies = self.load_strategies()
         
-        logger.debug(f"Initialized TextProcessor with config: {self.config}")
-        logger.debug(f"Loaded tools: {self.tools}")
-        logger.debug(f"Loaded models: {self.models}")
-        logger.debug(f"Loaded strategies: {self.strategies}")
+        if self.debug:
+            logger.info("Initialized TextProcessor")
 
     def load_tools(self) -> Dict[str, Callable]:
         tools = {}
@@ -357,19 +354,23 @@ class TextProcessor(BaseTextProcessor):
 
     def process_chunk(self, chunk: str) -> str:
         self.current_chunk_number += 1
-        logger.info(f"Processing chunk {self.current_chunk_number}/{self.chunk_count}")
+        if self.debug:
+            logger.info(f"Processing chunk {self.current_chunk_number}/{self.chunk_count}")
         previous_outputs = {}
         final_result = ""
         for i, strategy in enumerate(self.strategies, 1):
-            logger.info(f"Applying strategy {i}: {strategy.config.prompt_name}")
+            if self.debug:
+                logger.info(f"Applying strategy {i}: {strategy.config.prompt_name}")
             try:
                 result = strategy.process(chunk, self, previous_outputs)
                 if result is None:
-                    logger.warning(f"Strategy {i} returned None")
+                    if self.debug:
+                        logger.warning(f"Strategy {i} returned None")
                     continue
                 previous_outputs[strategy.config.output_name] = result
                 final_result = result
-                logger.info(f"Intermediate result of strategy {i}:\n{result[:100] if result else 'Empty result'}...")
+                if self.debug:
+                    logger.info(f"Result of strategy {i}: {result[:100]}...")  # 只显示结果的前100个字符
             except Exception as e:
                 logger.error(f"Error in strategy {i}: {str(e)}")
         return final_result
@@ -384,7 +385,22 @@ class TextProcessor(BaseTextProcessor):
         if model_name not in self.models:
             raise ValueError(f"Model '{model_name}' not found")
         client = self.models[model_name]
-        return client.generate(input_text)
+        
+        current_strategy = next(s for s in self.strategies if s.config.model == model_name)
+        prompt_name = current_strategy.config.prompt_name
+        
+        system_message = self.read_system_prompt(prompt_name)
+        user_message = input_text
+        
+        messages = [
+            {"role": "system", "content": system_message},
+            {"role": "user", "content": user_message}
+        ]
+        
+        if self.debug:
+            logger.info(f"Executing model: {model_name}")
+        
+        return client.query_api(messages)
 
     def execute_tool(self, tool_name: str, chunk: str, tool_params: Dict[str, Any] = None) -> str:
         if tool_name not in self.tools:
@@ -396,8 +412,8 @@ class TextProcessor(BaseTextProcessor):
 
 class ProcessorFactory:
     @staticmethod
-    def create_processor(config: Dict[str, Any], max_tokens: int, verbose: bool) -> TextProcessor:
-        return TextProcessor(config, max_tokens, verbose)
+    def create_processor(config: Dict[str, Any], max_tokens: int, verbose: bool, debug: bool) -> TextProcessor:
+        return TextProcessor(config, max_tokens, verbose, debug)
 
 # Main application
 def save_output(results, output_path, output_format):
@@ -420,16 +436,18 @@ def main():
     parser.add_argument("--verbose", action="store_true", help="Enable verbose console output")
     parser.add_argument("--config", type=str, help="Path to custom config file")
     parser.add_argument("--output_format", type=str, default="md", choices=["md", "txt", "json"], help="Output file format")
+    parser.add_argument("--debug", action="store_true", help="Enable debug mode with detailed prompt logging")
     args = parser.parse_args()
 
     try:
         config = ConfigManager.load_config(args.workflow, args.config)
-        logger.debug(f"Loaded config: {config}")
+        if args.debug:
+            logger.info("Config loaded successfully")
     except FileNotFoundError as e:
         logger.error(f"Config file not found: {e}")
         sys.exit(1)
     
-    processor = ProcessorFactory.create_processor(config, args.max_tokens, args.verbose)
+    processor = ProcessorFactory.create_processor(config, args.max_tokens, args.verbose, args.debug)
 
     input_path = Path(args.input_file).resolve()
     output_path = input_path.parent / f"{args.workflow}-output.{args.output_format}"
@@ -438,19 +456,22 @@ def main():
         with open_file(input_path, "r") as f:
             text = f.read()
 
-        logger.info(f"Processing input text: {text[:100]}...")  # 只显示前100个字符
+        if args.debug:
+            logger.info("Input text loaded successfully")
         results = processor.process_text(text)
 
         if not results:
             logger.warning("No results generated")
         else:
             save_output(results, output_path, args.output_format)
-            logger.info(f"All chunks processed. Results saved to {output_path}")
+            if args.debug:
+                logger.info(f"Results saved to {output_path}")
 
             with open_file(output_path, "r") as f:
                 content = f.read()
             pyperclip.copy(content)
-            logger.info("Content copied to clipboard.")
+            if args.debug:
+                logger.info("Content copied to clipboard")
 
     except FileNotFoundError:
         logger.error(f"Input file not found: {args.input_file}")
