@@ -18,3 +18,5 @@ config/*
 !config/polish_cn_audio_transcription_config.yaml
 !config/literature_review_exa_config.yaml
 replace_model_in_yaml.py
+zip_config_patterns.py
+addons.zip
