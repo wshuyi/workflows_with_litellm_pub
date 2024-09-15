@@ -23,7 +23,7 @@ def load_workflows():
 # Function to load config for a specific workflow
 def load_config(workflow):
     config_path = os.path.join(current_dir, 'config', f'{workflow}_config.yaml')
-    with open(config_path, 'r') as f:
+    with open(config_path, 'r', encoding='utf-8') as f:
         return yaml.safe_load(f)
 
 # Streamlit app
@@ -43,7 +43,7 @@ input_text = st.text_area('Enter text to process')
 if st.button('Process'):
     if input_text:
         # Save input text to a temporary file
-        with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.txt') as temp_file:
+        with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.txt', encoding='utf-8') as temp_file:
             temp_file.write(input_text)
             temp_file_path = temp_file.name
 
@@ -58,7 +58,7 @@ if st.button('Process'):
             # Display output and provide download link
             output_file = os.path.join(os.path.dirname(temp_file_path), f'{selected_workflow}-output.md')
             if os.path.exists(output_file):
-                with open(output_file, 'r') as f:
+                with open(output_file, 'r', encoding='utf-8') as f:
                     output_content = f.read()
                 st.text_area('Output', output_content, height=300)
                 st.download_button('Download Output', output_content, file_name=f'{selected_workflow}-output.md')
