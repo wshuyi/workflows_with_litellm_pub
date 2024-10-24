@@ -1,0 +1,34 @@
+strategies:
+- input_format: '{{text}}'
+  output_name: exa_result
+  tool_name: exa_search
+  tool_params:
+    category: academic
+- input_format: '{{exa_result}}'
+  model: openrouter/anthropic/claude-3.5-sonnet
+  output_name: outline
+  prompt_name: academic_outliner
+- input_format: 'outline:
+
+    {{outline}}
+
+    search result:
+
+    {{exa_result}}
+
+    '
+  model: openrouter/anthropic/claude-3.5-sonnet
+  output_name: outline_filled
+  prompt_name: academic_fill_outline_with_material
+- input_format: 'outline filled:
+
+    {{outline_filled}}
+
+    search result:
+
+    {{exa_result}}
+
+    '
+  model: openrouter/anthropic/claude-3.5-sonnet
+  output_name: literature_review_section
+  prompt_name: literature_review_exa
