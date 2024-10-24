@@ -1,0 +1,27 @@
+# 常见词汇列表
+
+- Obsidian
+- 王树义
+- 玉树芝兰
+- Roam Research
+- Logseq
+- Keyboard Maestro
+- Typing Mind
+- Heptabase
+- 卡片笔记写作法
+- DALLE
+- Kimi Chat
+- 秘塔 AI 搜索
+- GLM-4
+- GPTs
+- Claude
+- 吕立青
+- SciSpace
+- Dify
+- Coze
+- Phidata
+- AutoGen
+- CrewAI
+- Streamlit
+- Perplexity
+- o1 Preview

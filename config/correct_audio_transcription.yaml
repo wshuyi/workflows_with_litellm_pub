@@ -1,0 +1,13 @@
+strategies:
+- input_format: 'original text:
+
+    {{text}}
+
+    vocabularies:
+
+    {{memory_vocab}}
+
+    '
+  model: openrouter/anthropic/claude-3.5-sonnet
+  output_name: correction
+  prompt_name: correct_cn_audio_transcription
