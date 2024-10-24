@@ -25,13 +25,15 @@ def create_api_key_input(key_name, env_var_name):
     
     # 如果用户输入了新的API key且与环境变量不同
     if api_key and api_key != env_value:
-        # 更新.env文件
+        # 更新或创建.env文件
         env_path = os.path.join(os.path.dirname(__file__), '.env')
+        
+        # 如果.env文件存在，读取现有内容
         if os.path.exists(env_path):
             with open(env_path, 'r') as f:
                 lines = f.readlines()
             
-            # 查找并更新或添加API key
+            # 查找并更新API key
             key_found = False
             for i, line in enumerate(lines):
                 if line.startswith(f"{env_var_name} ="):
@@ -42,11 +44,16 @@ def create_api_key_input(key_name, env_var_name):
             if not key_found:
                 lines.append(f"{env_var_name} = {api_key}\n")
             
+            # 写入更新后的内容
             with open(env_path, 'w') as f:
                 f.writelines(lines)
-            
-            # 更新环境变量
-            os.environ[env_var_name] = api_key
+        else:
+            # 如果.env文件不存在，创建新文件
+            with open(env_path, 'w') as f:
+                f.write(f"{env_var_name} = {api_key}\n")
+        
+        # 更新环境变量
+        os.environ[env_var_name] = api_key
     
     return api_key
 
