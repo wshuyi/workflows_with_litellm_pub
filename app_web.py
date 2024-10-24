@@ -16,13 +16,13 @@ def load_workflows():
     workflows = []
     config_dir = os.path.join(current_dir, 'config')
     for file in os.listdir(config_dir):
-        if file.endswith('_config.yaml'):
-            workflows.append(file.replace('_config.yaml', ''))
+        if file.endswith('.yaml'):
+            workflows.append(file.replace('.yaml', ''))
     return workflows
 
 # Function to load config for a specific workflow
 def load_config(workflow):
-    config_path = os.path.join(current_dir, 'config', f'{workflow}_config.yaml')
+    config_path = os.path.join(current_dir, 'config', f'{workflow}.yaml')
     with open(config_path, 'r', encoding='utf-8') as f:
         return yaml.safe_load(f)
 

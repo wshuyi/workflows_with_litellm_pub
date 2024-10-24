@@ -92,6 +92,13 @@ class ConfigValidator:
         for strategy in config['strategies']:
             if 'tool_name' not in strategy and 'model' not in strategy:
                 raise ValueError("Each strategy must have either 'tool_name' or 'model'")
+        
+        # 添加对 parameters 的验证
+        if 'parameters' in config:
+            if not isinstance(config['parameters'], dict):
+                raise ValueError("'parameters' must be a dictionary")
+            if 'tokens' in config['parameters'] and not isinstance(config['parameters']['tokens'], int):
+                raise ValueError("'tokens' in parameters must be an integer")
 
 class ConfigManager:
     @staticmethod
@@ -100,10 +107,14 @@ class ConfigManager:
             config_path = custom_config_path
         else:
             current_dir = os.path.dirname(os.path.abspath(__file__))
-            config_path = os.path.join(current_dir, 'config', f'{workflow_name}_config.yaml')
-        
-        if not os.path.exists(config_path):
-            raise FileNotFoundError(f"Config file not found: {config_path}")
+            config_dir = os.path.join(current_dir, 'config')
+            
+            # 查找完全匹配的配置文件
+            config_filename = f"{workflow_name}.yaml"
+            config_path = os.path.join(config_dir, config_filename)
+            
+            if not os.path.exists(config_path):
+                raise FileNotFoundError(f"Config file not found for workflow: {workflow_name}")
         
         try:
             with open(config_path, 'r') as f:
@@ -165,10 +176,10 @@ class ProcessingStrategy:
 
 # Text Processor
 class BaseTextProcessor:
-    def __init__(self, max_tokens_per_chunk: int = 1000):
-        self.max_tokens_per_chunk = max_tokens_per_chunk
+    def __init__(self, config: Dict[str, Any], default_max_tokens: int = 1000):
+        self.max_tokens_per_chunk = config.get('parameters', {}).get('tokens', default_max_tokens)
         self.encoding = tiktoken.encoding_for_model("gpt-4-turbo")
-        self.config = {}
+        self.config = config
         self.chunk_count = 0
         self.current_chunk_number = 0
         self.memory = {}
@@ -283,34 +294,59 @@ class BaseTextProcessor:
 # Tools
 class SearchTools:
     @staticmethod
-    def exa_search(query: str, category: str = "tweet", start_date: str = None) -> str:
-        logger.info(f"Executing Exa search with query: {query}, category: {category}")
+    def exa_search(query: str, **kwargs) -> str:
+        logger.info(f"Executing Exa search with query: {query}")
         exa = Exa(os.getenv("EXA_API_KEY"))
         
-        if start_date is None and category == "tweet":
-            start_date = (datetime.now() - timedelta(hours=72)).strftime("%Y-%m-%d")
+        # Split the query into lines
+        query_lines = query.strip().split('\n')
+        actual_query = query_lines[0]
+        
+        # Prepare parameters for search with default values
+        search_params = {
+            "query": actual_query,
+            "num_results": 10,
+            "start_published_date": None,
+            "use_autoprompt": True,
+            "category": "tweet",
+            "text": {"max_characters": 2000},
+            "highlights": {
+                "highlights_per_url": 2,
+                "num_sentences": 1,
+                "query": f"This is the highlight query: {actual_query}"
+            }
+        }
+        
+        # Update search_params with provided kwargs
+        search_params.update(kwargs)
+        
+        # Check if there's a second line with a date
+        if len(query_lines) > 1 and query_lines[1].isdigit() and len(query_lines[1]) == 8:
+            date_str = query_lines[1]
+            # Convert to ISO 8601 format
+            search_params['start_published_date'] = f"{date_str[:4]}-{date_str[4:6]}-{date_str[6:]}T00:00:00.000Z"
+        elif search_params['start_published_date'] is None and search_params['category'] == "tweet":
+            # Use the last 72 hours as default for tweets
+            search_params['start_published_date'] = (datetime.now() - timedelta(hours=72)).strftime("%Y-%m-%dT%H:%M:%S.000Z")
+        
+        # Remove None values
+        search_params = {k: v for k, v in search_params.items() if v is not None}
+        
+        # Log all parameters
+        logger.info(f"Exa search parameters: {json.dumps(search_params, indent=2)}")
         
         try:
-            results = exa.search_and_contents(
-                query,
-                num_results=10,
-                start_published_date=start_date,
-                use_autoprompt=True,
-                category=category,
-                text={"max_characters": 2000},
-                highlights={"highlights_per_url": 2, "num_sentences": 1, "query": f"This is the highlight query: {query}"}
-            )
+            results = exa.search_and_contents(**search_params)
             
-            logger.info(f"Exa {category} search completed successfully")
-            return f'# Topic: {query}\n{str(results)}'
+            logger.info(f"Exa {search_params['category']} search completed successfully")
+            return f'# Topic: {actual_query}\n{str(results)}'
         except Exception as e:
-            logger.error(f"Error in Exa {category} search: {str(e)}")
-            return f"Error in Exa {category} search: {str(e)}"
+            logger.error(f"Error in Exa {search_params['category']} search: {str(e)}")
+            return f"Error in Exa {search_params['category']} search: {str(e)}"
 
 class TextProcessor(BaseTextProcessor):
-    def __init__(self, config: Dict[str, Any], max_tokens_per_chunk: int = 1000, verbose: bool = False, debug: bool = False):
-        super().__init__(max_tokens_per_chunk)
-        self.config = config
+    def __init__(self, config: Dict[str, Any], default_max_tokens: int = 1000, verbose: bool = False, debug: bool = False):
+        super().__init__(config, default_max_tokens)
         self.verbose = verbose
         self.debug = debug
         self.tools = self.load_tools()
@@ -319,6 +355,7 @@ class TextProcessor(BaseTextProcessor):
         
         if self.debug:
             logger.info("Initialized TextProcessor")
+            logger.info(f"Max tokens per chunk: {self.max_tokens_per_chunk}")
 
     def load_tools(self) -> Dict[str, Callable]:
         tools = {}
@@ -359,6 +396,7 @@ class TextProcessor(BaseTextProcessor):
         previous_outputs = {}
         final_result = ""
         for i, strategy in enumerate(self.strategies, 1):
+            self.current_strategy = strategy  # Store current strategy
             if self.debug:
                 logger.info(f"Applying strategy {i}: {strategy.config.prompt_name}")
             try:
@@ -369,8 +407,8 @@ class TextProcessor(BaseTextProcessor):
                     continue
                 previous_outputs[strategy.config.output_name] = result
                 final_result = result
-                if self.debug:
-                    logger.info(f"Result of strategy {i}: {result[:100]}...")  # 只显示结果的前100个字符
+                # 添加中间输出结果到日志
+                logger.info(f"Intermediate result of strategy {i} ({strategy.config.prompt_name}):\n{result[:500]}...")  # 显示结果的前500个字符
             except Exception as e:
                 logger.error(f"Error in strategy {i}: {str(e)}")
         return final_result
@@ -390,7 +428,20 @@ class TextProcessor(BaseTextProcessor):
         prompt_name = current_strategy.config.prompt_name
         
         system_message = self.read_system_prompt(prompt_name)
-        user_message = input_text
+        user_message = input_text.strip()
+
+        # 确保 input_text 不包含系统提示词
+        if system_message in user_message:
+            logger.warning("User input contains system message. Removing it.")
+            user_message = user_message.replace(system_message, "").strip()
+        
+        # 替换 memory 内容，并包裹 {{ 和 }}
+        for key, value in self.memory.items():
+            placeholder = f"{{{{memory_{key}}}}}"
+            if placeholder in user_message:
+                user_message = user_message.replace(placeholder, f"{{{{{value}}}}}")  # 包裹 {{ 和 }}
+            else:
+                logger.warning(f"Placeholder {placeholder} not found in user input.")
         
         messages = [
             {"role": "system", "content": system_message},
@@ -399,21 +450,89 @@ class TextProcessor(BaseTextProcessor):
         
         if self.debug:
             logger.info(f"Executing model: {model_name}")
+            logger.info(f"System message: {system_message[:100]}...")  # 截断日志显示
+            logger.info(f"User message: {user_message[:100]}...")
+        
+        # Log messages before API call
+        self.log_model_messages(model_name, messages)
         
         return client.query_api(messages)
+
+    def log_model_messages(self, model_name: str, messages: List[Dict[str, str]]):
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        base_log_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'logs', 'model_calls')
+        log_dir = os.path.join(base_log_dir, model_name, timestamp)
+        os.makedirs(log_dir, exist_ok=True)
+        
+        # Log system message
+        with open(os.path.join(log_dir, 'system_message.md'), 'w', encoding='utf-8') as f:
+            f.write(messages[0]['content'])
+        
+        # Log user message
+        with open(os.path.join(log_dir, 'user_message.md'), 'w', encoding='utf-8') as f:
+            f.write(messages[1]['content'])
+        
+        # Log metadata
+        with open(os.path.join(log_dir, 'metadata.txt'), 'w', encoding='utf-8') as f:
+            f.write(f"Model: {model_name}\n")
+            f.write(f"Timestamp: {timestamp}\n")
+            f.write(f"Strategy: {self.current_strategy.config.prompt_name}\n")
+            f.write(f"Chunk: {self.current_chunk_number}/{self.chunk_count}\n")
+            f.write(f"System message length: {len(messages[0]['content'])}\n")
+            f.write(f"User message length: {len(messages[1]['content'])}\n")
+        
+        logger.info(f"Model messages logged to: {log_dir}")
+        logger.debug(f"System message: {messages[0]['content'][:100]}...")
+        logger.debug(f"User message: {messages[1]['content'][:100]}...")
 
     def execute_tool(self, tool_name: str, chunk: str, tool_params: Dict[str, Any] = None) -> str:
         if tool_name not in self.tools:
             raise ValueError(f"Unknown tool: {tool_name}")
         tool = self.tools[tool_name]
+        
+        # Merge tool_params with default params from the strategy config
+        merged_params = {**self.current_strategy.tool_params, **(tool_params or {})}
+        
+        # Log tool call before execution
+        self.log_tool_calls(tool_name, chunk, merged_params)
+        
+        return tool(chunk, **merged_params)
+
+    def log_tool_calls(self, tool_name: str, chunk: str, tool_params: Dict[str, Any] = None):
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        base_log_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'logs', 'tool_calls')
+        log_dir = os.path.join(base_log_dir, tool_name, timestamp)
+        os.makedirs(log_dir, exist_ok=True)
+        
+        # Log input chunk
+        with open(os.path.join(log_dir, 'input_chunk.txt'), 'w', encoding='utf-8') as f:
+            f.write(chunk)
+        
+        # Log tool parameters
         if tool_params:
-            return tool(chunk, **tool_params)
-        return tool(chunk)
+            with open(os.path.join(log_dir, 'tool_params.json'), 'w', encoding='utf-8') as f:
+                json.dump(tool_params, f, indent=2, ensure_ascii=False)
+        
+        # Log metadata
+        with open(os.path.join(log_dir, 'metadata.txt'), 'w', encoding='utf-8') as f:
+            f.write(f"Tool: {tool_name}\n")
+            f.write(f"Timestamp: {timestamp}\n")
+            f.write(f"Strategy: {self.current_strategy.config.prompt_name}\n")
+            f.write(f"Chunk: {self.current_chunk_number}/{self.chunk_count}\n")
+            f.write(f"Input chunk length: {len(chunk)}\n")
+            if tool_params:
+                f.write(f"Tool parameters: {json.dumps(tool_params, ensure_ascii=False)}\n")
+        
+        logger.info(f"Tool call logged to: {log_dir}")
+        logger.debug(f"Tool: {tool_name}")
+        logger.debug(f"Input chunk: {chunk[:100]}...")
+        if tool_params:
+            logger.debug(f"Tool parameters: {tool_params}")
 
 class ProcessorFactory:
     @staticmethod
-    def create_processor(config: Dict[str, Any], max_tokens: int, verbose: bool, debug: bool) -> TextProcessor:
-        return TextProcessor(config, max_tokens, verbose, debug)
+    def create_processor(config: Dict[str, Any], default_max_tokens: int, verbose: bool, debug: bool) -> TextProcessor:
+        return TextProcessor(config, default_max_tokens, verbose, debug)
 
 # Main application
 def save_output(results, output_path, output_format):
@@ -443,11 +562,14 @@ def main():
         config = ConfigManager.load_config(args.workflow, args.config)
         if args.debug:
             logger.info("Config loaded successfully")
+            logger.info(f"Config: {config}")
     except FileNotFoundError as e:
         logger.error(f"Config file not found: {e}")
         sys.exit(1)
     
-    processor = ProcessorFactory.create_processor(config, args.max_tokens, args.verbose, args.debug)
+    # 使用命令行参数作为默认值，如果配置文件中没有指定
+    default_max_tokens = args.max_tokens
+    processor = ProcessorFactory.create_processor(config, default_max_tokens, args.verbose, args.debug)
 
     input_path = Path(args.input_file).resolve()
     output_path = input_path.parent / f"{args.workflow}-output.{args.output_format}"
