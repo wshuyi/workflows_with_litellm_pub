@@ -5,7 +5,7 @@ strategies:
   tool_params:
     category: research paper
 - input_format: 'user input text: {{text}} search result: {{exa_result}}'
-  model: openrouter/anthropic/claude-3.5-sonnet
+  model: openrouter/anthropic/claude-3-5-sonnet-20240620
   output_name: outlined_result
   prompt_name: outliner_wsy
 - input_format: 'outline filled:
@@ -17,6 +17,6 @@ strategies:
     {{exa_result}}
 
     '
-  model: openai/claude-3-5-sonnet-20241022
+  model: openrouter/anthropic/claude-3-5-sonnet
   output_name: literature_review_section
   prompt_name: literature_review_exa
