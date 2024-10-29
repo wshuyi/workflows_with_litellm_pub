@@ -1,5 +1,7 @@
 # Readme
 
+## English version
+
 Run workflow easily with:
 
 1. YAML file
@@ -8,7 +10,7 @@ Run workflow easily with:
 
 For details, please look into [this article](https://wshuyi.medium.com/how-to-create-and-run-your-own-ai-workflows-with-ease-1a611e16d48f) for the basic operation and [this one](https://www.patreon.com/posts/how-to-use-line-110869551?utm_medium=clipboard_copy&utm_source=copyLink&utm_campaign=postshare_creator&utm_content=join_link) for advanced academic use.
 
-中文说明(The Chinese version)
+## 中文说明（Chinese version）
 
 有了这个简单的 Python 项目，你使用 AI 工作流，就不需要跟 fabric 的各种安装配置打交道了。
 
@@ -18,3 +20,7 @@ For details, please look into [this article](https://wshuyi.medium.com/how-to-cr
 - 所有 patterns 包含的结构化提示词，参考 fabric 写法，大多可以在两个项目之间兼容复用
 
 基础操作请参考[这篇文章](https://mp.weixin.qq.com/s/tHIbczDuVfNdbmJlN6Xs9A)，进阶学术用途请参考[这篇文章](https://mp.weixin.qq.com/s/Xbfhh0w6-iNBpE7FExrRrA)
+
+我为你录制了安装配置的视频教程，请[点击这个链接](https://www.bilibili.com/video/BV1Gs1GY5EUE/)。
+
+注意我录制的视频教程是以 macOS 系统为例，后来又让学生帮我录制了 Windows 系统的安装过程演示，请[点击这个链接](https://www.bilibili.com/video/BV18vS8YNEdw/)查看。
