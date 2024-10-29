@@ -1,26 +1,23 @@
 strategies:
 - input_format: '{{text}}'
-  output_name: exa_result
+  output_name: exa_news_result
+  tool_name: exa_search
+  tool_params:
+    category: news
+- input_format: '{{text}}'
+  output_name: exa_tweet_result
   tool_name: exa_search
   tool_params:
     category: tweet
-- input_format: '{{exa_result}}'
+- input_format: 'user input text: {{text}} search result: {{exa_news_result}} {{exa_tweet_result}}'
   model: openrouter/anthropic/claude-3.5-sonnet
-  output_name: outline
+  output_name: outlined_result
   prompt_name: outliner_wsy
-- input_format: 'search result:
+- input_format: 'user input text:
 
-    {{exa_result}}
+    {{outlined_result}}
 
-    outline:
-
-    {{outline}}
-
-    '
-  model: openrouter/anthropic/claude-3.5-sonnet
-  output_name: draft_filled
-  prompt_name: fill_draft_with_material
-- input_format: '{{draft_filled}}'
-  model: openrouter/anthropic/claude-3.5-sonnet
+    blog example: {{memory_blog_example}}'
+  model: openai/claude-3-5-sonnet-20241022
   output_name: tech_blog_draft
   prompt_name: write_wsy_tech_blog

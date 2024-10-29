@@ -13,22 +13,26 @@ current_dir = os.path.dirname(os.path.abspath(__file__))
 
 def create_api_key_input(key_name, env_var_name):
     """创建API key输入框并处理其逻辑"""
-    env_value = os.getenv(env_var_name)
+    # 直接从.env文件读取值
+    env_path = os.path.join(os.path.dirname(__file__), '.env')
+    env_value = ""
+    if os.path.exists(env_path):
+        with open(env_path, 'r') as f:
+            for line in f:
+                if line.strip().startswith(f"{env_var_name} ="):
+                    env_value = line.split('=')[1].strip()
+                    break
     
     # 创建密码输入框
     api_key = st.text_input(
         f"{key_name} API Key", 
-        value=env_value if env_value else "",
+        value=env_value,
         type="password",
         help=f"Enter your {key_name} API key"
     )
     
     # 如果用户输入了新的API key且与环境变量不同
     if api_key and api_key != env_value:
-        # 更新或创建.env文件
-        env_path = os.path.join(os.path.dirname(__file__), '.env')
-        
-        # 如果.env文件存在，读取现有内容
         if os.path.exists(env_path):
             with open(env_path, 'r') as f:
                 lines = f.readlines()
@@ -36,7 +40,7 @@ def create_api_key_input(key_name, env_var_name):
             # 查找并更新API key
             key_found = False
             for i, line in enumerate(lines):
-                if line.startswith(f"{env_var_name} ="):
+                if line.strip().startswith(f"{env_var_name} ="):
                     lines[i] = f"{env_var_name} = {api_key}\n"
                     key_found = True
                     break
@@ -78,6 +82,50 @@ with st.sidebar:
     st.header('API Keys')
     openrouter_api_key = create_api_key_input("OpenRouter", "OPENROUTER_API_KEY")
     exa_api_key = create_api_key_input("EXA", "EXA_API_KEY")
+    
+    # 添加OpenAI设置
+    st.subheader('OpenAI Settings')
+    openai_api_key = create_api_key_input("OpenAI", "OPENAI_API_KEY")
+    
+    # 从.env文件读取 OPENAI_API_BASE
+    env_path = os.path.join(os.path.dirname(__file__), '.env')
+    env_base_url = ""
+    if os.path.exists(env_path):
+        with open(env_path, 'r') as f:
+            for line in f:
+                if line.strip().startswith('OPENAI_API_BASE ='):
+                    env_base_url = line.split('=')[1].strip()
+                    break
+    
+    openai_api_base = st.text_input(
+        "OpenAI API Base URL",
+        value=env_base_url,
+        help="Enter your OpenAI API base URL (optional)"
+    )
+    
+    # 如果用户输入了新的API base且与环境变量不同
+    if openai_api_base and openai_api_base != env_base_url:
+        if os.path.exists(env_path):
+            with open(env_path, 'r') as f:
+                lines = f.readlines()
+            
+            base_found = False
+            for i, line in enumerate(lines):
+                if line.strip().startswith("OPENAI_API_BASE ="):
+                    lines[i] = f"OPENAI_API_BASE = {openai_api_base}\n"
+                    base_found = True
+                    break
+            
+            if not base_found:
+                lines.append(f"OPENAI_API_BASE = {openai_api_base}\n")
+            
+            with open(env_path, 'w') as f:
+                f.writelines(lines)
+        else:
+            with open(env_path, 'w') as f:
+                f.write(f"OPENAI_API_BASE = {openai_api_base}\n")
+        
+        os.environ["OPENAI_API_BASE"] = openai_api_base
 
 # Workflow selection
 workflows = load_workflows()
